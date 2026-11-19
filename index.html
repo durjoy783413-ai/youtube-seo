@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="bn"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YouTube SEO</title>
+<style>
+body{font-family:sans-serif;margin:0;padding:16px;background:#f5f5f5;color:#111}
+h2{margin:0 0 12px}
+.card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px}
+button{width:100%;padding:14px;font-size:16px;border:0;border-radius:10px;background:#d00;color:#fff;margin-top:8px}
+button.s{background:#333}
+input,select,textarea{width:100%;box-sizing:border-box;padding:10px;font-size:15px;margin-top:8px;border:1px solid #ccc;border-radius:8px}
+pre{white-space:pre-wrap;word-break:break-word;margin:6px 0;font-family:inherit}
+</style></head><body>
+<h2>🎬 YouTube SEO</h2>
+<div class="card">
+<input type="file" id="vid" accept="video/*">
+<textarea id="note" rows="2" placeholder="ভিডিওর বিষয় সংক্ষেপে লিখুন (ঐচ্ছিক)"></textarea>
+<select id="lang"><option>বাংলা</option><option>English</option><option>Hindi</option></select>
+<button id="go">SEO তৈরি করুন</button>
+<div id="st" style="margin-top:8px"></div>
+</div>
+<div id="out"></div>
+<div class="card">
+<b>⚙️ Settings</b>
+<input id="gk" placeholder="Gemini API Key">
+<input id="yk" placeholder="YouTube API Key">
+<input id="gm" placeholder="Gemini model">
+<button class="s" id="save">Save</button>
+</div>
+<script>
+const $=id=>document.getElementById(id),L=localStorage;
+$('gk').value=L.gk||'';$('yk').value=L.yk||'';$('gm').value=L.gm||'gemini-2.5-flash';
+$('save').onclick=()=>{L.gk=$('gk').value.trim();L.yk=$('yk').value.trim();L.gm=$('gm').value.trim()||'gemini-2.5-flash';alert('Saved')};
+const st=t=>$('st').textContent=t;
+
+function frames(file,n=8){return new Promise((res,rej)=>{
+ const v=document.createElement('video');v.muted=true;v.playsInline=true;v.src=URL.createObjectURL(file);
+ v.onloadedmetadata=async()=>{
+  const out=[],c=document.createElement('canvas'),sc=Math.min(1,512/Math.max(v.videoWidth,v.videoHeight));
+  c.width=v.videoWidth*sc;c.height=v.videoHeight*sc;const x=c.getContext('2d');
+  for(let i=0;i<n;i++){
+   v.currentTime=v.duration*(i+0.5)/n;
+   await new Promise(r=>v.onseeked=r);
+   x.drawImage(v,0,0,c.width,c.height);
+   out.push(c.toDataURL('image/jpeg',0.6).split(',')[1]);
+  }
+  res(out);};
+ v.onerror=()=>rej(new Error('ভিডিও পড়া যায়নি'));
+});}
+
+async function gem(parts){
+ const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${L.gm||'gemini-2.5-flash'}:generateContent?key=${L.gk}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}],generationConfig:{responseMimeType:'application/json'}})});
+ const d=await r.json();
+ if(!r.ok)throw new Error(d.error?.message||'Gemini error');
+ return JSON.parse(d.candidates[0].content.parts[0].text);
+}
+
+async function yt(q){
+ const a=await(await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&order=viewCount&q=${encodeURIComponent(q)}&key=${L.yk}`)).json();
+ if(a.error)throw new Error(a.error.message);
+ const ids=a.items.map(i=>i.id.videoId).join(',');
+ const b=await(await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${ids}&key=${L.yk}`)).json();
+ return b.items.map(i=>({title:i.snippet.title,tags:(i.snippet.tags||[]).slice(0,15),views:i.statistics.viewCount}));
+}
+
+$('go').onclick=async()=>{
+ try{
+  if(!L.gk||!L.yk)return alert('আগে Settings-এ দুটো Key সেভ করুন');
+  const f=$('vid').files[0];if(!f)return alert('ভিডিও বাছুন');
+  const lang=$('lang').value,note=$('note').value;
+  st('ভিডিও থেকে ছবি নেওয়া হচ্ছে...');
+  const imgs=(await frames(f)).map(d=>({inline_data:{mime_type:'image/jpeg',data:d}}));
+  st('ভিডিও বোঝা হচ্ছে...');
+  const a=await gem([...imgs,{text:`These are frames of a YouTube video. Creator note: ${note}. Return JSON: {"topic":"...","audience":"...","queries":["3 YouTube search queries"]}`}]);
+  st('YouTube রিসার্চ চলছে...');
+  let comp=[];
+  for(const q of a.queries.slice(0,2))comp.push(...await yt(q));
+  st('SEO লেখা হচ্ছে...');
+  const r=await gem([...imgs,{text:`You are a YouTube SEO expert. Video topic: ${a.topic}. Audience: ${a.audience}. Creator note: ${note}. Top competing videos: ${JSON.stringify(comp)}. Write in ${lang}. Return JSON: {"audience":"...","titles":["5 click-worthy honest titles under 70 chars"],"description":"full description, keywords in first 2 lines, call to action","hashtags":["3-5"],"tags":["15 tags"],"tips":["3 tips"]}`}]);
+  show(r);st('');
+ }catch(e){st('ত্রুটি: '+e.message)}
+};
+
+function show(r){
+ const sec=(h,t)=>`<div class="card"><b>${h}</b><pre>${t.replace(/</g,'&lt;')}</pre><button class="s" onclick="navigator.clipboard.writeText(decodeURIComponent('${encodeURIComponent(t).replace(/'/g,'%27')}'));this.textContent='কপি হয়েছে ✓'">কপি</button></div>`;
+ $('out').innerHTML=sec('🎯 অডিয়েন্স',r.audience)+sec('📝 টাইটেল',r.titles.join('\n'))+sec('📄 ডেসক্রিপশন',r.description)+sec('#️⃣ হ্যাশট্যাগ',r.hashtags.join(' '))+sec('🏷️ ট্যাগ',r.tags.join(', '))+sec('💡 টিপস',r.tips.join('\n'));
+}
+</script></body></html>
