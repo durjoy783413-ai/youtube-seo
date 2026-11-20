@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="bn"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YouTube SEO</title>
+<style>
+body{font-family:sans-serif;margin:0;padding:16px;background:#f5f5f5;color:#111}
+h2{margin:0 0 12px}
+.card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px}
+button{width:100%;padding:14px;font-size:16px;border:0;border-radius:10px;background:#d00;color:#fff;margin-top:8px}
+button.s{background:#333}
+input,select,textarea{width:100%;box-sizing:border-box;padding:10px;font-size:15px;margin-top:8px;border:1px solid #ccc;border-radius:8px}
+pre{white-space:pre-wrap;word-break:break-word;margin:6px 0;font-family:inherit}
+</style></head><body>
+<h2>🎬 YouTube SEO</h2>
+<div class="card">
+<input type="file" id="vid" accept="video/*">
+<textarea id="note" rows="2" placeholder="ভিডিওর বিষয় সংক্ষেপে লিখুন (ঐচ্ছিক)"></textarea>
+<select id="lang"><option>বাংলা</option><option>English</option><option>Hindi</option></select>
+<button id="go">SEO তৈরি করুন</button>
+<div id="st" style="margin-top:8px"></div>
+</div>
+<div id="out"></div>
+<div class="card">
+<b>⚙️ Settings</b>
+<input id="gk" placeholder="Gemini API Key">
+<input id="yk" placeholder="YouTube API Key">
+<input id="gm" placeholder="Gemini model">
+<button class="s" id="save">Save</button>
+</div>
+<script>
+const $=id=>document.getElementById(id),L=localStorage;
+const G='https://generativelanguage.googleapis.com';
+$('gk').value=L.gk||'';$('yk').value=L.yk||'';$('gm').value=L.gm||'gemini-3.8-flash';
+$('save').onclick=()=>{L.gk=$('gk').value.trim();L.yk=$('yk').value.trim();L.gm=$('gm').value.trim()||'gemini-3.8-flash';alert('Saved')};
+const st=t=>$('st').textContent=t;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+async function upload(file){
+ const s=await fetch(`${G}/upload/v1beta/files?key=${L.gk}`,{method:'POST',headers:{'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(file.size),'X-Goog-Upload-Header-Content-Type':file.type||'video/mp4','Content-Type':'application/json'},body:JSON.stringify({file:{display_name:'video'}})});
+ if(!s.ok)throw new Error('শুরু ব্যর্থ '+s.status);
+ const url=s.headers.get('x-goog-upload-url');
+ if(!url)throw new Error('আপলোড লিংক পাওয়া যায়নি');
+ const u=await fetch(url,{method:'POST',headers:{'X-Goog-Upload-Offset':'0','X-Goog-Upload-Command':'upload, finalize'},body:file});
+ if(!u.ok)throw new Error('আপলোড ব্যর্থ '+u.status);
+ let f=(await u.json()).file;
+ for(let i=0;i<80&&f.state==='PROCESSING';i++){
+  st('ভিডিও প্রসেস হচ্ছে...');
+  await sleep(3000);
+  f=await(await fetch(`${G}/v1beta/${f.name}?key=${L.gk}`)).json();
+ }
+ if(f.state!=='ACTIVE')throw new Error('ভিডিও প্রসেস হয়নি');
+ return f;
+}
+
+function frames(file,n=8){return new Promise((res,rej)=>{
+ const v=document.createElement('video');v.muted=true;v.playsInline=true;v.src=URL.createObjectURL(file);
+ v.onloadedmetadata=async()=>{
+  const out=[],c=document.createElement('canvas'),sc=Math.min(1,512/Math.max(v.videoWidth,v.videoHeight));
+  c.width=v.videoWidth*sc;c.height=v.videoHeight*sc;const x=c.getContext('2d');
+  for(let i=0;i<n;i++){
+   v.currentTime=v.duration*(i+0.5)/n;
+   await new Promise(r=>v.onseeked=r);
+   x.drawImage(v,0,0,c.width,c.height);
+   out.push(c.toDataURL('image/jpeg',0.6).split(',')[1]);
+  }
+  res(out);};
+ v.onerror=()=>rej(new Error('ভিডিও পড়া যায়নি'));
+});}
+
+async function audio(file){
+ if(file.size>150*1024*1024)throw new Error('ফাইল ১৫০MB-র বেশি');
+ const buf=await file.arrayBuffer();
+ const AC=window.AudioContext||window.webkitAudioContext;
+ const ctx=new AC();
+ const dec=await ctx.decodeAudioData(buf);
+ ctx.close();
+ const sr=8000,secs=Math.min(dec.duration,600),len=Math.floor(secs*sr);
+ const off=new OfflineAudioContext(1,len,sr);
+ const src=off.createBufferSource();src.buffer=dec;src.connect(off.destination);src.start(0);
+ const d=(await off.startRendering()).getChannelData(0);
+ const wav=new ArrayBuffer(44+len*2),v=new DataView(wav);
+ const w=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};
+ w(0,'RIFF');v.setUint32(4,36+len*2,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,len*2,true);
+ for(let i=0;i<len;i++){const s=Math.max(-1,Math.min(1,d[i]));v.setInt16(44+i*2,s<0?s*32768:s*32767,true)}
+ const u8=new Uint8Array(wav);let bin='';
+ for(let i=0;i<u8.length;i+=32768)bin+=String.fromCharCode.apply(null,u8.subarray(i,i+32768));
+ return btoa(bin);
+}
+
+async function gem(parts){
+ const r=await fetch(`${G}/v1beta/models/${L.gm||'gemini-3.8-flash'}:generateContent?key=${L.gk}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts}],generationConfig:{responseMimeType:'application/json'}})});
+ const d=await r.json();
+ if(!r.ok)throw new Error(d.error?.message||'Gemini error');
+ return JSON.parse(d.candidates[0].content.parts[0].text);
+}
+
+async function yt(q){
+ const a=await(await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&order=viewCount&q=${encodeURIComponent(q)}&key=${L.yk}`)).json();
+ if(a.error)throw new Error(a.error.message);
+ const ids=a.items.map(i=>i.id.videoId).join(',');
+ const b=await(await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${ids}&key=${L.yk}`)).json();
+ return b.items.map(i=>({title:i.snippet.title,tags:(i.snippet.tags||[]).slice(0,15),views:i.statistics.viewCount}));
+}
+
+$('go').onclick=async()=>{
+ try{
+  if(!L.gk||!L.yk)return alert('আগে Settings-এ দুটো Key সেভ করুন');
+  const f=$('vid').files[0];if(!f)return alert('ভিডিও বাছুন');
+  const lang=$('lang').value,note=$('note').value;
+  let media=[],mode='',why=[];
+  try{
+   st('ভিডিও আপলোড হচ্ছে (ছবি ও অডিও দুটোই বোঝার জন্য)। বড় ভিডিওতে সময় লাগবে...');
+   const uf=await upload(f);
+   media=[{file_data:{mime_type:uf.mimeType,file_uri:uf.uri}}];
+   mode='পুরো ভিডিও (ছবি + অডিও)';
+  }catch(e){why.push('পুরো ভিডিও আপলোড হয়নি: '+e.message)}
+  if(!media.length){
+   st('ছবি নেওয়া হচ্ছে...');
+   media=(await frames(f)).map(d=>({inline_data:{mime_type:'image/jpeg',data:d}}));
+   try{
+    st('অডিও আলাদা করা হচ্ছে...');
+    const au=await audio(f);
+    media.push({inline_data:{mime_type:'audio/wav',data:au}});
+    mode='ছবি + অডিও';
+   }catch(e){why.push('অডিও আলাদা হয়নি: '+e.message);mode='শুধু ছবি (অডিও ছাড়া)'}
+  }
+  st('বোঝা হচ্ছে: '+mode);
+  const a=await gem([...media,{text:`This is a YouTube video (visuals and audio). Creator note: ${note}. Listen carefully to the speech; it may be Bengali, Arabic, Urdu or another language. Return JSON: {"topic":"...","audience":"...","spoken_summary":"detailed summary of what the speaker says: main points, names, keywords, quotes in short","visual_summary":"what is shown","queries":["3 YouTube search queries based mainly on the spoken topic"]}`}]);
+  st('YouTube রিসার্চ চলছে...');
+  let comp=[];
+  for(const q of a.queries.slice(0,2))comp.push(...await yt(q));
+  st('SEO লেখা হচ্ছে...');
+  const r=await gem([{text:`You are a YouTube SEO expert. Video topic: ${a.topic}. Audience: ${a.audience}. What is said in the video: ${a.spoken_summary}. What is shown: ${a.visual_summary}. Creator note: ${note}. Top competing videos: ${JSON.stringify(comp)}. Base the SEO mainly on the spoken content. Write in ${lang}. Return JSON: {"audience":"...","titles":["5 click-worthy honest titles under 70 chars"],"description":"full description, keywords in first 2 lines, call to action","hashtags":["3-5"],"tags":["15 tags"],"tips":["3 tips"]}`}]);
+  show(r,mode,why);st('');
+ }catch(e){st('ত্রুটি: '+e.message)}
+};
+
+function show(r,mode,why){
+ const sec=(h,t)=>`<div class="card"><b>${h}</b><pre>${t.replace(/</g,'&lt;')}</pre><button class="s" onclick="navigator.clipboard.writeText(decodeURIComponent('${encodeURIComponent(t).replace(/'/g,'%27')}'));this.textContent='কপি হয়েছে ✓'">কপি</button></div>`;
+ $('out').innerHTML=sec('ℹ️ বিশ্লেষণের ধরন',mode+(why.length?'\n'+why.join('\n'):''))+sec('🎯 অডিয়েন্স',r.audience)+sec('📝 টাইটেল',r.titles.join('\n'))+sec('📄 ডেসক্রিপশন',r.description)+sec('#️⃣ হ্যাশট্যাগ',r.hashtags.join(' '))+sec('🏷️ ট্যাগ',r.tags.join(', '))+sec('💡 টিপস',r.tips.join('\n'));
+}
+</script></body></html>
